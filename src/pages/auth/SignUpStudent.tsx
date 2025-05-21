@@ -13,7 +13,7 @@ function SignUpStudent() {
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { signup, login } = useAuth();
+  const { signup, login, isLoading } = useAuth();
 
   const validDomains = ["colorado.edu", "colostate.edu", "sdsu.edu"];
 
@@ -42,15 +42,27 @@ function SignUpStudent() {
     if (step === 3) {
       try {
         await signup({ email, username, password }, 'student');
-        navigate("/dashboard/student");
-      } catch (err) {
-        setError("Signup failed. Please try again.");
+      } catch (err: any) {
+        if (err.message?.includes('already registered') || err.message?.includes('already exists')) {
+          setError("An account with this email already exists. Please log in instead.");
+          setIsLogin(true);
+          return;
+        }
+        setError(err.message || "Signup failed. Please try again.");
       }
       return;
     }
     setError('');
     setStep(step + 1);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto bg-white rounded-lg shadow-md overflow-hidden transition-all duration-300">
@@ -120,16 +132,20 @@ function SignUpStudent() {
 
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700"
+              disabled={isLoading}
+              className={`w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              Log In
+              {isLoading ? 'Logging in...' : 'Log In'}
             </button>
             
             <p className="text-center text-sm text-gray-600">
               Don't have an account?{' '}
               <button
                 type="button"
-                onClick={() => setIsLogin(false)}
+                onClick={() => {
+                  setIsLogin(false);
+                  setError('');
+                }}
                 className="text-blue-600 hover:text-blue-800"
               >
                 Sign Up
@@ -223,9 +239,10 @@ function SignUpStudent() {
             <div className="mt-6">
               <button
                 onClick={nextStep}
-                className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center"
+                disabled={isLoading}
+                className={`w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center justify-center ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
-                <span>{step === 3 ? 'Create Account' : 'Next'}</span>
+                <span>{step === 3 ? (isLoading ? 'Creating Account...' : 'Create Account') : 'Next'}</span>
                 {step !== 3 && <ChevronRight size={16} className="ml-1" />}
               </button>
               
@@ -233,7 +250,10 @@ function SignUpStudent() {
                 Already have an account?{' '}
                 <button
                   type="button"
-                  onClick={() => setIsLogin(true)}
+                  onClick={() => {
+                    setIsLogin(true);
+                    setError('');
+                  }}
                   className="text-blue-600 hover:text-blue-800"
                 >
                   Log In

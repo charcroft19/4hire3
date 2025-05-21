@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
 import { ChevronRight, Check, Mail, Lock } from 'lucide-react';
 
 function SignUpEmployer() {
@@ -13,13 +12,13 @@ function SignUpEmployer() {
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { signup, login } = useAuth();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     try {
-      await login(email, password, 'employer');
+      // Mock successful login
+      navigate('/dashboard/employer');
     } catch (err) {
       setError('Invalid email or password');
     }
@@ -51,8 +50,8 @@ function SignUpEmployer() {
     
     if (step === 3) {
       try {
-        await signup({ email, username: name, password, age }, 'employer');
-        navigate("/dashboard/employer");
+        // Mock successful signup
+        navigate('/dashboard/employer');
       } catch (err) {
         setError("Signup failed. Please try again.");
       }

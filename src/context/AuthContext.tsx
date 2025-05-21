@@ -78,7 +78,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             });
             setUserType(profile.type);
 
-            // Only redirect if on auth pages
+            // Navigate to the appropriate dashboard
             const isAuthPage = location.pathname.includes('/signup/');
             if (isAuthPage) {
               navigate(profile.type === 'student' ? '/dashboard/student' : '/dashboard/employer');

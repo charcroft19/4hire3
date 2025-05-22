@@ -1,9 +1,22 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { useNavigate, useLocation } from 'react-router-dom';
-import toast from 'react-hot-toast';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import toast from "react-hot-toast";
+import {
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import { auth, db } from "../firebase/config";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 
-type UniversityType = 'colorado.edu' | 'colostate.edu' | 'sdsu.edu';
+type UniversityType = "colorado.edu" | "colostate.edu" | "sdsu.edu";
 
 interface AuthUser {
   id: string;
@@ -14,7 +27,7 @@ interface AuthUser {
   university?: UniversityType;
 }
 
-type UserType = 'student' | 'employer' | null;
+type UserType = "student" | "employer" | null;
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -26,15 +39,6 @@ interface AuthContextType {
   isLoading: boolean;
 }
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
-}
-
-const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
@@ -42,180 +46,140 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [userType, setUserType] = useState<UserType>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
-  const location = useLocation();
-
-  const fetchUserProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (!data) throw new Error('Profile not found');
-      
-      return data;
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      return null;
-    }
-  };
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      try {
-        if (session?.user) {
-          const profile = await fetchUserProfile(session.user.id);
-          if (profile) {
-            setUser({
-              id: session.user.id,
-              email: profile.email,
-              username: profile.username,
-              avatar: profile.avatar,
-              university: profile.university,
-              bio: profile.bio,
-            });
-            setUserType(profile.type);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const profileRef = doc(db, "profiles", firebaseUser.uid);
+        const profileSnap = await getDoc(profileRef);
 
-            // Only redirect if on auth pages
-            const isAuthPage = location.pathname.includes('/signup/');
-            if (isAuthPage) {
-              navigate(profile.type === 'student' ? '/dashboard/student' : '/dashboard/employer');
-            }
-          }
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    });
+        if (profileSnap.exists()) {
+          const profile = profileSnap.data();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      try {
-        if (session?.user) {
-          const profile = await fetchUserProfile(session.user.id);
-          if (profile) {
-            setUser({
-              id: session.user.id,
-              email: profile.email,
-              username: profile.username,
-              avatar: profile.avatar,
-              university: profile.university,
-              bio: profile.bio,
-            });
-            setUserType(profile.type);
-          }
+          setUser({
+            id: firebaseUser.uid,
+            email: profile.email,
+            username: profile.username,
+            avatar: profile.avatar,
+            university: profile.university,
+            bio: profile.bio,
+          });
+
+          setUserType(profile.type);
         } else {
           setUser(null);
           setUserType(null);
         }
-      } finally {
-        setIsLoading(false);
+      } else {
+        setUser(null);
+        setUserType(null);
       }
+
+      setIsLoading(false);
     });
 
-    return () => subscription.unsubscribe();
-  }, [navigate, location.pathname]);
+    return () => unsubscribe();
+  }, []);
 
   const login = async (email: string, password: string, type: UserType) => {
     try {
-      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
         email,
-        password,
-      });
+        password
+      );
+      const user = userCredential.user;
 
-      if (signInError || !authData.user) {
-        throw signInError || new Error('Login failed');
+      if (!user) {
+        throw new Error("Login failed");
       }
 
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authData.user.id)
-        .maybeSingle();
+      const profileRef = doc(db, "profiles", user.uid);
+      const profileSnap = await getDoc(profileRef);
 
-      if (profileError) {
-        throw new Error('Failed to fetch profile');
+      if (!profileSnap.exists()) {
+        throw new Error("Profile not found");
       }
 
-      if (!profile) {
-        throw new Error('Profile not found');
-      }
+      const profile = profileSnap.data();
 
       if (profile.type !== type) {
-        await supabase.auth.signOut();
-        throw new Error('Please use the correct login for your account type');
+        await auth.signOut();
+        throw new Error("Please use the correct login for your account type");
       }
 
       setUser({
-        id: authData.user.id,
+        id: user.uid,
         email: profile.email,
         username: profile.username,
         avatar: profile.avatar,
         university: profile.university,
         bio: profile.bio,
       });
+
       setUserType(profile.type);
 
-      toast.success('Successfully logged in!');
-      navigate(type === 'student' ? '/dashboard/student' : '/dashboard/employer');
+      toast.success("Successfully logged in!");
+      navigate(
+        type === "student" ? "/dashboard/student" : "/dashboard/employer"
+      );
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Login failed");
       throw error;
     }
   };
 
   const signup = async (data: any, type: UserType) => {
     try {
-      if (type === 'student') {
-        const domain = data.email.split('@')[1];
-        if (!['colorado.edu', 'colostate.edu', 'sdsu.edu'].includes(domain)) {
-          throw new Error('Please use your university email address');
+      if (type === "student") {
+        const domain = data.email.split("@")[1];
+        if (!["colorado.edu", "colostate.edu", "sdsu.edu"].includes(domain)) {
+          throw new Error("Please use your university email address");
         }
       }
 
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        data.email,
+        data.password
+      );
+
+      const user = userCredential.user;
+
+      if (!user) {
+        throw new Error("Failed to create account");
+      }
+
+      // Store additional user data in Firestore
+      await setDoc(doc(db, "profiles", user.uid), {
+        id: user.uid,
+        username: data.username,
         email: data.email,
-        password: data.password,
+        type: type,
+        university: type === "student" ? data.email.split("@")[1] : null,
       });
 
-      if (signUpError || !authData.user) {
-        throw signUpError || new Error('Failed to create account');
-      }
-
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert([
-          {
-            id: authData.user.id,
-            username: data.username,
-            email: data.email,
-            type: type,
-            university: type === 'student' ? data.email.split('@')[1] : null,
-          }
-        ]);
-
-      if (profileError) {
-        // If profile creation fails, clean up the auth user
-        await supabase.auth.signOut();
-        throw profileError;
-      }
-
+      // Update local state
       setUser({
-        id: authData.user.id,
+        id: user.uid,
         email: data.email,
         username: data.username,
-        university: type === 'student' ? data.email.split('@')[1] : undefined,
+        university: type === "student" ? data.email.split("@")[1] : undefined,
       });
+
       setUserType(type);
 
-      toast.success('Account created successfully!');
-      navigate(type === 'student' ? '/dashboard/student' : '/dashboard/employer');
+      toast.success("Account created successfully!");
+      navigate(
+        type === "student" ? "/dashboard/student" : "/dashboard/employer"
+      );
     } catch (error: any) {
-      if (error.message?.includes('already registered') || error.message?.includes('already exists')) {
-        toast.error('An account with this email already exists. Please log in instead.');
+      if (error.message?.includes("email-already-in-use")) {
+        toast.error(
+          "An account with this email already exists. Please log in instead."
+        );
       } else {
-        toast.error(error.message || 'Failed to create account');
+        toast.error(error.message || "Failed to create account");
       }
       throw error;
     }
@@ -223,53 +187,51 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      await signOut(auth);
 
       setUser(null);
       setUserType(null);
-      navigate('/');
-      toast.success('Successfully logged out');
+      navigate("/");
+      toast.success("Successfully logged out");
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to log out");
       throw error;
     }
   };
 
   const updateUserProfile = async (data: Partial<AuthUser>) => {
     try {
-      if (!user) throw new Error('No user logged in');
+      if (!user) throw new Error("No user logged in");
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          username: data.username,
-          avatar: data.avatar,
-          bio: data.bio,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
+      const profileRef = doc(db, "profiles", user.id);
 
-      if (profileError) throw profileError;
+      await updateDoc(profileRef, {
+        username: data.username,
+        avatar: data.avatar,
+        bio: data.bio,
+        updated_at: new Date().toISOString(),
+      });
 
       setUser({ ...user, ...data });
-      toast.success('Profile updated successfully!');
+      toast.success("Profile updated successfully!");
     } catch (error: any) {
-      toast.error(error.message);
+      toast.error(error.message || "Failed to update profile");
       throw error;
     }
   };
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      userType,
-      login,
-      logout,
-      signup,
-      updateUserProfile,
-      isLoading
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        userType,
+        login,
+        logout,
+        signup,
+        updateUserProfile,
+        isLoading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -278,7 +240,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
 };
